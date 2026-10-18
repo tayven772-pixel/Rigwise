@@ -1,7 +1,7 @@
 """Rigwise — redesigned Windows PC control center."""
-import os, subprocess, threading, webbrowser, shutil
+import os, subprocess, threading, webbrowser, shutil, json
 import customtkinter as ctk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 import rigwise_core as core
 
 ctk.set_appearance_mode("Dark")
@@ -16,6 +16,9 @@ class Rigwise(ctk.CTk):
         self.geometry("1200x780"); self.minsize(980,650); self.configure(fg_color=BG)
         self.specs=None; self.tweaks=[]; self.page="Dashboard"; self.search=ctk.StringVar()
         self.meter=core.Meter(); self.theme="Dark"; self.nav={}
+        self.games=[]; self.game_process=None; self.game_pid=None; self.game_original_priority=None; self.game_status=None; self.game_stats=None
+        self.games_file=os.path.join(core.APPDATA,"games.json")
+        self.protocol("WM_DELETE_WINDOW", self.close_app)
         self.grid_columnconfigure(1,weight=1); self.grid_rowconfigure(0,weight=1)
         self._shell(); self.show("Dashboard")
         threading.Thread(target=self._load,daemon=True).start()
@@ -28,7 +31,7 @@ class Rigwise(ctk.CTk):
         ctk.CTkLabel(brand,text="R",width=42,height=42,corner_radius=12,fg_color=GREEN,text_color="#062016",font=ctk.CTkFont(size=24,weight="bold")).pack(side="left")
         ctk.CTkLabel(brand,text="RIGWISE\nPC CONTROL CENTER",justify="left",text_color="#edf2fb",font=ctk.CTkFont(size=14,weight="bold")).pack(side="left",padx=10)
         ctk.CTkLabel(side,text="WORKSPACE",text_color="#71809a",font=ctk.CTkFont(size=10,weight="bold"),anchor="w").pack(fill="x",padx=20,pady=(0,8))
-        for name,icon in [("Dashboard","⌂"),("Optimize","✦"),("Startup apps","◷"),("Tools","⚒"),("About","ⓘ")]:
+        for name,icon in [("Dashboard","⌂"),("Game Mode","▶"),("Optimize","✦"),("Startup apps","◷"),("Tools","⚒"),("About","ⓘ")]:
             b=ctk.CTkButton(side,text=f"{icon}    {name}",anchor="w",height=42,corner_radius=10,fg_color="transparent",hover_color="#1e2d43",text_color="#c6d1e2",command=lambda n=name:self.show(n))
             b.pack(fill="x",padx=11,pady=3);self.nav[name]=b
         ctk.CTkFrame(side,fg_color="transparent").pack(fill="both",expand=True)
@@ -60,7 +63,7 @@ class Rigwise(ctk.CTk):
     def show(self,name):
         self.page=name;self.heading.configure(text=name)
         for n,b in self.nav.items():b.configure(fg_color="#1e2d43" if n==name else "transparent",text_color="#ffffff" if n==name else "#c6d1e2")
-        {"Dashboard":self.dashboard,"Optimize":self.optimize,"Startup apps":self.startup,"Tools":self.tools,"About":self.about}[name]()
+        {"Dashboard":self.dashboard,"Game Mode":self.game_mode,"Optimize":self.optimize,"Startup apps":self.startup,"Tools":self.tools,"About":self.about}[name]()
 
     def _load(self):
         try:s=core.read_specs();self.after(0,lambda:self._ready(s))
@@ -186,6 +189,122 @@ class Rigwise(ctk.CTk):
                 try:t.revert();count+=1
                 except Exception:pass
         self.status.set(f"Restored {count} setting(s).");self._tweak_rows()
+
+    def _load_games(self):
+        try:
+            with open(self.games_file, "r", encoding="utf-8") as f:
+                data=json.load(f)
+            self.games=[g for g in data if isinstance(g,dict) and g.get("name") and g.get("path")]
+        except (OSError, ValueError, TypeError):
+            self.games=[]
+
+    def _save_games(self):
+        os.makedirs(core.APPDATA, exist_ok=True)
+        with open(self.games_file, "w", encoding="utf-8") as f:
+            json.dump(self.games, f, indent=2)
+
+    def game_mode(self):
+        self._load_games()
+        p=self.clear()
+        hero=ctk.CTkFrame(p,fg_color="#12302f",corner_radius=17)
+        hero.grid(row=0,column=0,sticky="ew",pady=(0,14));hero.grid_columnconfigure(0,weight=1)
+        ctk.CTkLabel(hero,text="Game Mode",font=ctk.CTkFont(size=24,weight="bold"),text_color="#edfff7").grid(row=0,column=0,sticky="w",padx=20,pady=(18,4))
+        ctk.CTkLabel(hero,text="Launch a game with a controlled priority boost and watch your session's resource use.",text_color="#b5d9cf",wraplength=700,justify="left").grid(row=1,column=0,sticky="w",padx=20,pady=(0,18))
+        library=self.card(p,"Your game library","Add games you own by selecting their .exe. Profiles stay on this PC; Rigwise does not upload them.")
+        library.grid(row=1,column=0,sticky="ew",pady=(0,12))
+        row=ctk.CTkFrame(library,fg_color="transparent");row.pack(fill="x",padx=15,pady=12)
+        names=[g["name"] for g in self.games]
+        if not names:names=["No games added"]
+        self.game_choice=ctk.StringVar(value=names[0])
+        self.game_menu=ctk.CTkOptionMenu(row,values=names,variable=self.game_choice,width=240)
+        self.game_menu.pack(side="left",padx=(0,8))
+        ctk.CTkButton(row,text="Add game",command=self.add_game).pack(side="left",padx=(0,8))
+        ctk.CTkButton(row,text="Remove selected",fg_color="#572534",hover_color="#713044",command=self.remove_game).pack(side="left")
+        self.game_status=ctk.CTkLabel(library,text="Choose a game to launch. Only the game process you start is adjusted; other apps are not killed or suspended.",text_color=MUTED,wraplength=800,justify="left")
+        self.game_status.pack(anchor="w",padx=17,pady=(0,12))
+        session=self.card(p,"Live session","Priority boost is limited to Above normal—not Realtime—and is restored when Rigwise closes if the game is still running.")
+        session.grid(row=2,column=0,sticky="ew")
+        self.game_stats=ctk.CTkLabel(session,text="No game session started.",text_color=TEXT,font=ctk.CTkFont(size=14),justify="left")
+        self.game_stats.pack(anchor="w",padx=17,pady=(12,4))
+        ctk.CTkButton(session,text="Launch selected game",height=40,command=self.launch_game).pack(anchor="w",padx=15,pady=(8,15))
+        ctk.CTkLabel(p,text="Note: priority changes do not guarantee higher FPS. Results depend on your hardware, game, drivers, thermals, and background workload.",text_color=MUTED,wraplength=850,justify="left").grid(row=3,column=0,sticky="w",pady=(12,0))
+        if self.game_pid:
+            self._update_game_stats()
+
+    def add_game(self):
+        path=filedialog.askopenfilename(title="Choose a game executable",filetypes=[("Windows executable","*.exe"),("All files","*.*")])
+        if not path:return
+        base=os.path.splitext(os.path.basename(path))[0]
+        name=base;idx=2
+        while any(g["name"].lower()==name.lower() for g in self.games):
+            name=f"{base} ({idx})";idx+=1
+        self.games.append({"name":name,"path":path})
+        try:self._save_games()
+        except OSError as e:messagebox.showerror("Could not save game",str(e));return
+        self.show("Game Mode")
+        self.game_choice.set(name)
+        self.game_menu.set(name)
+        self.status.set(f"Added {name} to your local game library.")
+
+    def remove_game(self):
+        name=self.game_choice.get()
+        if name=="No games added":return
+        game=next((g for g in self.games if g["name"]==name),None)
+        if not game:return
+        if not messagebox.askyesno("Remove game",f"Remove {name} from Rigwise? This will not uninstall the game."):return
+        self.games=[g for g in self.games if g["name"]!=name]
+        self._save_games();self.show("Game Mode")
+
+    def launch_game(self):
+        name=self.game_choice.get()
+        game=next((g for g in self.games if g["name"]==name),None)
+        if not game:
+            messagebox.showinfo("Game Mode","Add a game's .exe first.")
+            return
+        path=game["path"]
+        if not os.path.isfile(path):
+            messagebox.showerror("Game not found",f"The saved executable no longer exists:\n{path}\n\nRemove it and add the game again.")
+            return
+        try:
+            proc=subprocess.Popen([path],cwd=os.path.dirname(path) or None)
+            self.game_process=proc;self.game_pid=proc.pid;self.game_original_priority=None
+            priority_note="Normal priority"
+            if core.psutil:
+                try:
+                    process=core.psutil.Process(proc.pid)
+                    self.game_original_priority=process.nice()
+                    process.nice(core.psutil.ABOVE_NORMAL_PRIORITY_CLASS)
+                    priority_note="Above normal priority"
+                except (OSError,ValueError,core.psutil.Error):
+                    priority_note="Launched; priority change was unavailable"
+            self.status.set(f"Launched {name}.")
+            if self.game_stats:self.game_stats.configure(text=f"{name}\nPID: {proc.pid}\nMode: {priority_note}\nMonitoring CPU and memory…")
+            self.after(1500,self._update_game_stats)
+        except OSError as e:
+            messagebox.showerror("Could not launch game",str(e))
+
+    def _update_game_stats(self):
+        if not self.game_pid or not self.game_stats:return
+        try:
+            proc=core.psutil.Process(self.game_pid) if core.psutil else None
+            if not proc or not proc.is_running():
+                self.game_stats.configure(text="Game process has exited. Start another session when you're ready.")
+                self.game_pid=None;self.game_process=None;self.game_original_priority=None
+                return
+            cpu=proc.cpu_percent(None);mem=proc.memory_info().rss/2**30
+            try:priority=proc.nice()
+            except Exception:priority="unavailable"
+            self.game_stats.configure(text=f"Game PID: {self.game_pid}    CPU: {cpu:.1f}%    Memory: {mem:.2f} GB    Priority: {priority}\nSession is active. Other applications are left running.")
+            self.after(1500,self._update_game_stats)
+        except Exception as e:
+            self.game_stats.configure(text=f"Session monitor unavailable: {e}")
+
+    def close_app(self):
+        try:
+            if self.game_pid and self.game_original_priority is not None and core.psutil:
+                try:core.psutil.Process(self.game_pid).nice(self.game_original_priority)
+                except Exception:pass
+        finally:self.destroy()
 
     def startup(self):
         p=self.clear();c=self.card(p,"Startup applications","Disable auto-start for apps you do not need immediately. This does not uninstall them.");c.grid(row=0,column=0,sticky="ew",pady=(0,10))
