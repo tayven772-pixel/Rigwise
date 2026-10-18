@@ -1,14 +1,20 @@
-# Rigwise — Windows EXE build
+# Rigwise — Windows PC Control Center
 
-This repository builds `rigwise.py` into `Rigwise.exe` on a GitHub-hosted Windows runner.
+Rigwise is a local-first Windows utility with a redesigned dashboard, live CPU/memory/disk meters, hardware summary, searchable optimization library, startup-app controls, and maintenance tools.
 
-## Build
+## Build the Windows executable
 
-1. Add the project file `rigwise.py` to the repository root.
-2. Open the **Actions** tab and choose **Build Rigwise for Windows**.
-3. If needed, select **Run workflow** on `main`.
-4. Open the completed run and download the `Rigwise-Windows-exe` artifact. Extract the ZIP to get `Rigwise.exe`.
+1. Open the **Actions** tab in this repository.
+2. Choose **Build Rigwise for Windows**.
+3. Open the latest run and wait for the build to finish.
+4. Download the `Rigwise-Windows-exe` artifact and extract the ZIP to get `Rigwise.exe`.
 
-A push to `main` also starts a build automatically. Artifacts are retained for 14 days and are not published as a public release.
+A push to `main` starts a build automatically. Artifacts are kept for 14 days.
 
-**Safety:** Rigwise can change Windows settings. Review each tweak before applying it and keep the app's backup file so you can restore settings. Windows may warn that the executable is unsigned.
+## Safety notes
+
+- Review each optimization before applying it; performance results vary by computer.
+- Registry tweaks save the previous values before changing them. Use **Optimize → Undo all** to restore backed-up settings.
+- Some changes require administrator rights or a restart. Laptop power settings may reduce battery life.
+- Temporary-file cleanup skips files Windows is currently using.
+- The executable is not code-signed, so Windows may show a security warning.
